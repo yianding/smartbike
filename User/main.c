@@ -104,7 +104,7 @@ int main(void)
 		{
 		     Lock_Do();
 		}
-		if ( whilecount% 6000==0)            //1min = 60s = 60*100
+		if ( whilecount% 600==0)            //1min = 60s = 60*100
 		{
 			GPS_Send();                        //读取的可能是同步的，也可能是上一秒存下来的，但是问题不大
 			
