@@ -9,8 +9,15 @@
 
 uint16_t ADValue;
 float Voltage;
-extern volatile uint8_t timer_flag;
-void unLockBike(){
+
+volatile int Lock_Counter = 0;
+volatile int GPS_Counter = 0;
+
+int checkMqtt(){
+	
+return 1;
+}
+void unLockBikeCommand1(){
 			//AA 55 10 11 00 21
 		//AA 55 10 17 01 A5 CD
 		//AA 55 10 19 01 00 2A
@@ -22,8 +29,9 @@ void unLockBike(){
 		d[4]=0x00;
 		d[5]=0x21;
 	  Serial_SendArray(d,6);
-		Delay_ms(100);
-	
+};
+void unLockBikeCommand2(){
+        uint8_t d[10];
 		d[0]=0xAA;
 		d[1]=0x55;
 		d[2]=0x10;
@@ -32,8 +40,10 @@ void unLockBike(){
 		d[5]=0xA5;
 		d[6]=0xCD;
 	  Serial_SendArray(d,7);
-		Delay_ms(100);
+}
 
+void unLockBikeCommand3(){
+	    uint8_t d[10];
 		d[0]=0xAA;
 		d[1]=0x55;
 		d[2]=0x10;
@@ -42,8 +52,6 @@ void unLockBike(){
 		d[5]=0x00;
 		d[6]=0x2A;
 	  Serial_SendArray(d,7);
-		Delay_ms(100);
-
 }
 int main(void)
 {
@@ -55,38 +63,58 @@ int main(void)
 	//OLED_ShowString(3, 1, "RRddt");
 	//OLED_ShowString(2, 1, "123456789ao");
 	//OLED_ShowString(4, 1, "123456");
-	
+
 	
 	AD_Init();
-	
-	OLED_ShowString(1, 1, "ADValue:");
-	OLED_ShowString(2, 1, "Volatge:0.00V");
-	
 	Serial_Init2();
+	OLED_Init();
+	USART_ITConfig(USART2, USART_IT_RXNE, DISABLE);
 	AT_Init();
-	AT_Out();
+	AT_Out();                                  //检测是否连上网。可删
 	GPS_open();                                //delay
-	TIM2_Init();
+	USART_ITConfig(USART2, USART_IT_RXNE, ENABLE);
+	uint32_t whilecount=0;
+				OLED_ShowString(1, 1, "ADValue:");
+	    OLED_ShowString(2, 1, "Volatge:0.00V");
 	while (1)
 	{
+		if(whilecount%10==0){
+
 		ADValue = AD_GetValue();
 		Voltage = (float)ADValue / 4095 * 3.3;
 		
-		OLED_ShowNum(1, 9, ADValue, 4);
+	    OLED_ShowNum(1, 9, ADValue, 4);
 		OLED_ShowNum(2, 9, Voltage, 1);
 		OLED_ShowNum(2, 11, (uint16_t)(Voltage * 100) % 100, 2);
-		unLockBike();
-		Delay_ms(100);
-	    	if(timer_flag==1)
-		     {
-		      	timer_flag = 0;		
-			    GPS_ReceiveDataAndDo();            //读取的可能是同步的，也可能是上一秒存下来的，但是问题不大
-		//	    OLED_ShowString(4, 1, "GPS");
-		     }
+		}
+		whilecount++;
+		Delay_ms(10);
 		
+		if(whilecount%100==0){
+			unLockBikeCommand1();
+		}			
+        if(whilecount%100==20){
+			unLockBikeCommand2();
+		}	
+        if(whilecount%100==40){
+			unLockBikeCommand3();
+		}	
+		
+		if (whilecount%100==0)
+		{
+		     Lock_Do();
+		}
+		if ( whilecount% 6000==0)            //1min = 60s = 60*100
+		{
+			GPS_Send();                        //读取的可能是同步的，也可能是上一秒存下来的，但是问题不大
+			
+		}
 	}
 /*
 
+		//unLockBike();
+	   OLED_ShowNum(1, 1, whilecount, 10); 
+       OLED_ShowNum(2, 1, whilecount%60, 10);
 	Delay_ms(1000);
 	Serial_SendString("AT+QICSGP=1,1,\"\",\"\",\"\"\r\n");
 Delay_ms(1000);

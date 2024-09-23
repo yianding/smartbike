@@ -28,11 +28,6 @@ void Serial_Init2(void)
 	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
 	GPIO_Init(GPIOA, &GPIO_InitStructure);
 	
-	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_6 | GPIO_Pin_7;   // 配置输入相应的引脚
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;         
-    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;        
-    GPIO_Init(GPIOA, &GPIO_InitStructure);
-	
 	USART_InitTypeDef USART_InitStructure;
 	USART_InitStructure.USART_BaudRate = 115200;
 	USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
@@ -47,7 +42,7 @@ void Serial_Init2(void)
 	NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
 	
 	NVIC_InitTypeDef NVIC_InitStructure;
-    NVIC_InitStructure.NVIC_IRQChannel = USART2_IRQn;
+        NVIC_InitStructure.NVIC_IRQChannel = USART2_IRQn;
 	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
 	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 1;
 	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
@@ -71,8 +66,7 @@ void Send_Command(const char* command)   //用于传输命令
     
      USART_SendData(USART2, '\n');
      while (USART_GetFlagStatus(USART2, USART_FLAG_TXE) == RESET);
-	 
-	 
+	 	 
 }
 
 //-------------------------------------用于服务器初始化，不设置检测------------------------------------
@@ -135,36 +129,47 @@ void AT_Init(void)           //封装模块连接到服务器的一套流程
 	Delay_ms(200);
 }
 
-void AT_Out(void)      
+void CreateAndSendCommand(char *input)           //用于发送数据到HH
+{
+	char command[100];
+	strcpy(command, "AT+MPUB=\"HH\",0,0,\"");    //"AT+MPUB=\"HH\",0,0,\"Connection successful\"";
+	strcat(command, input);
+	strcat(command, "\"");
+	
+	Send_Command(command);
+}
+
+void AT_Out(void)                                //测试用，有时连不上网
 {
 	const char* AT_Out = "AT+MPUB=\"HH\",0,0,\"Connecting\"";
 	Send_Command(AT_Out);
 	
 }
 
-
 //------------------------------------------接收部分---------------------------------
 
 char rxBuffer[BUFFER_SIZE];
+char Lock_data[BUFFER_SIZE];
 volatile uint16_t bufferIndex = 0;
 char gps_data[BUFFER_SIZE2];
 
-void DoToReceive(char* data, int length)
+void Lock_Do(void)
 {
-    data[length] = '\0';                                       //0x20000018 rxBuffer[] "A+MSUB: "phone",2 bytes,"on""
-	
-	if (strstr(data, "\"on\"") != NULL)     //input == on ,LED7 off,LED6 on
+	char Lock1[10];
+	char Lock2[10];
+	strcpy(Lock1,"Lock Open");
+	strcpy(Lock2,"Lock Off");
+                                                 //0x20000018 rxBuffer[] "A+MSUB: "phone",2 bytes,"on""	
+	if (strstr(Lock_data, "\"on\"") != NULL)     //input == on ,LED7 off,LED6 on
 	{
-		GPIO_SetBits(GPIOA,GPIO_Pin_6);
-		GPIO_ResetBits(GPIOA,GPIO_Pin_7);
+		CreateAndSendCommand(Lock1);
+		memset(Lock_data, 0, BUFFER_SIZE);
 	}
-	else if (strstr(data, "\"off\"") != NULL)    //input == off ,LED6 off,LED7 on
+	else if (strstr(Lock_data, "\"off\"") != NULL)    //input == off ,LED6 off,LED7 on
 	{
-		GPIO_SetBits(GPIOA,GPIO_Pin_7);
-		GPIO_ResetBits(GPIOA,GPIO_Pin_6);
+		CreateAndSendCommand(Lock2);
+		memset(Lock_data, 0, BUFFER_SIZE);
 	}
-
-	memset(rxBuffer, 0, BUFFER_SIZE);
 }
 
 void USART2_IRQHandler(void)
@@ -177,18 +182,22 @@ void USART2_IRQHandler(void)
         {
             if (bufferIndex > 0)       // 确保缓冲区中有有效数据
             {
-                rxBuffer[bufferIndex] = '\0'; 
+                rxBuffer[bufferIndex] = '\0';                      //如果不是GPS信号，存在BUFFER_SIZE里面
 				
-				if(strstr(rxBuffer, "MSUB") != NULL)
+				if(strstr(rxBuffer, "MSUB") != NULL)               //如果在不断输入，lock_data也不断更新
                 {
-					DoToReceive(rxBuffer, bufferIndex);
+					memset(Lock_data, 0, BUFFER_SIZE);
+					strncpy(Lock_data, rxBuffer, BUFFER_SIZE - 1);
+					Lock_data[bufferIndex] = '\0';
+					memset(rxBuffer, 0, BUFFER_SIZE);
 				}
-				else if (strstr(rxBuffer,"$GNRMC") != NULL)
+				if (strstr(rxBuffer,"$GNRMC") != NULL)
 				{
-					memset(gps_data, 0, BUFFER_SIZE2);               //清除缓存
+					memset(gps_data, 0, BUFFER_SIZE2);             //清除缓存
 					strncpy(gps_data, rxBuffer, BUFFER_SIZE2 - 1);
 					gps_data[bufferIndex] = '\n';
-					gps_data[bufferIndex+1] = '\0';               //存在BUFFER_SIZE2中了。每秒更新，这样读取无需等待
+					gps_data[bufferIndex+1] = '\0';                //存在BUFFER_SIZE2中了。每秒更新，这样读取无需等待
+					memset(rxBuffer, 0, BUFFER_SIZE);
 				}
             }
             bufferIndex = 0;           //较为简单可以直接用
@@ -209,46 +218,13 @@ void USART2_IRQHandler(void)
 
 
 //----------------------------------------接收经纬度并传输给手机---------------------
-//使用定时器产生30s的接受中断
-void TIM2_Init(void)
-{
-	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
-	
-	TIM_TimeBaseInitTypeDef TIM_InitStructrue;
-	TIM_InitStructrue.TIM_ClockDivision = TIM_CKD_DIV1;
-	TIM_InitStructrue.TIM_CounterMode = TIM_CounterMode_Up;
-	TIM_InitStructrue.TIM_Period = 9999;
-	TIM_InitStructrue.TIM_Prescaler = 7199;
-	TIM_TimeBaseInit(TIM2,&TIM_InitStructrue);
-	
-	TIM_ITConfig(TIM2, TIM_IT_Update, ENABLE);
-	
-	NVIC_InitTypeDef NVIC_InitStructure;
-    NVIC_InitStructure.NVIC_IRQChannel = TIM2_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 2;  // 设定优先级为2
-    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;         // 子优先级
-    NVIC_Init(&NVIC_InitStructure);;
-	
-	TIM_Cmd(TIM2, ENABLE);
-}
-
 void GPS_open(void)
 {
 	const char* GPS_OpenCommand = "AT+MGPSC=1";
 	Send_Command(GPS_OpenCommand);
-	Delay_s(90);                                 //30+TIM30=1 min
+//	Delay_s(30);                                 //30+60=1.5 min
 }
 
-void CreateAndSendCommand(char *input)
-{
-	char command[100];
-	strcpy(command, "AT+MPUB=\"HH\",0,0,\"");    //"AT+MPUB=\"HH\",0,0,\"Connection successful\"";
-	strcat(command, input);
-	strcat(command, "\"");
-	
-	Send_Command(command);
-}
 
 void GPS_min(char A[2][14],char Num[2][20])  //A应该是未转换的经纬度
 {
@@ -282,7 +258,7 @@ void GPS_FEN(char L[2][11],char K[2][20])                           //分度转化，
 	strcpy(A[0],a1);            //把数字存进去了，这是维度
 	strcpy(A[1],b1);
 	
-	GPS_min(A,NUM);          //这里的作用是修改NUM,还只有经纬度
+	GPS_min(A,NUM);             //这里的作用是修改NUM,还只有经纬度
 	
 	strcat(NUM[0],a2);
 	strcat(NUM[1],b2);
@@ -362,28 +338,11 @@ void GPS_Get (char gps_FristLine[],char result[2][20])  //$GNRMC,080646.000,A,41
 	strcpy(result[1],TRUE[1]);      //修改result的值
 }
 
-void GPS_ReceiveDataAndDo(void)     //
+void GPS_Send(void)     //
 {
 	char gps_FristLine[BUFFER_SIZE2];
 	
 	memset(gps_FristLine, 0, sizeof(gps_FristLine));
-	
-	//现在gps_data里存的就是第一行的数据
-	/*strcpy(gps_data,"$GNRMC,020532.767,A,4138.973059,N,12324.850776,E,0.365,0.00,220924,,E,A*08");
-	               //012345678901234567890123456789012345678901234567890123456789012345678901234
-	               //0         1         2         3         4         5         6         7
-	gps_data[74]='\n';
-	gps_data[75]='\0';*/
-	
-	/*char *newline = strchr(gps_data, '\n');  //strchr 函数用于查找 gps_data 中第一个出现的换行符 \n。如果找到了，newline 将指向换行符的位置；如果未找到，newline 将为 NULL。
-	size_t LineSize;
-	
-	if(newline != NULL)
-	{
-		LineSize = newline - gps_data;
-		strncpy(gps_FristLine, gps_data, LineSize);
-		gps_FristLine[LineSize] = '\0'; 	
-	}*/
 	strcpy(gps_FristLine,gps_data);
 	char result[2][20];
 	
@@ -393,29 +352,13 @@ void GPS_ReceiveDataAndDo(void)     //
 	                                               //所以这一行改成正常值就ok,写到frist
 	char site[50];
 	char space[5] = "   ";
-	OLED_ShowString(3, 1, result[0]);
-	OLED_ShowString(4, 1, result[1]);
 	strcpy(site,result[0]);
 	strcat(site,space);
 	strcat(site,result[1]);
+	OLED_ShowString(4, 1, result[0]);
+	OLED_ShowString(3, 1, result[1]);
 	site[26] = '\0';
 
 	CreateAndSendCommand(site);
 		
 }
-
-void TIM2_IRQHandler(void)
-{
-	if(TIM_GetITStatus(TIM2, TIM_IT_Update) == SET)
-	{
-		TIM_ClearITPendingBit(TIM2, TIM_IT_Update);
-        timer_counter++;
-		
-		if(timer_counter >=30)
-		{
-			timer_counter =0;
-			timer_flag = 1;
-		}
-	}
-}
-
